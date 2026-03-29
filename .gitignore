@@ -1,0 +1,25 @@
+# Dependency directories
+node_modules/
+vendor/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Docker logs and temp files
+*.log
+.docker/
+
+.continue/
+
+# IDE and Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# PHP specific
+composer.phar
+composer.lock

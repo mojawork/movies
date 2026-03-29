@@ -1,0 +1,6 @@
+.env
+.DS_Store
+.idea
+.continue
+Dockerfile
+docker-compose.yml

@@ -1,0 +1,23 @@
+[
+  {
+    "title": "Inception",
+    "director": "Christopher Nolan",
+    "release_year": 2010,
+    "genre": "Sci-Fi",
+    "rating": 8.8
+  },
+  {
+    "title": "The Matrix",
+    "director": "Lana Wachowski, Lilly Wachowski",
+    "release_year": 1999,
+    "genre": "Sci-Fi",
+    "rating": 8.7
+  },
+  {
+    "title": "Interstellar",
+    "director": "Christopher Nolan",
+    "release_year": 2014,
+    "genre": "Sci-Fi",
+    "rating": 8.6
+  }
+]
