@@ -28,63 +28,125 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 // Get input data
 $input = json_decode(file_get_contents('php://input'), true);
 $title = isset($input['title']) ? trim($input['title']) : (isset($_POST['title']) ? trim($_POST['title']) : null);
+$barcode = isset($input['barcode']) ? trim($input['barcode']) : (isset($_POST['barcode']) ? trim($_POST['barcode']) : null);
 
-if (empty($title)) {
+if (empty($title) && empty($barcode)) {
     http_response_code(400);
-    echo json_encode(['error' => 'Title is required.']);
+    echo json_encode(['error' => 'Title or Barcode is required.']);
     exit;
 }
 
 try {
-    // Optional: Try to find a TMDB ID for this title automatically
+    // Optional: Try to find a TMDB ID for this title or barcode automatically
     $tmdbId = null;
     if (!empty($tmdbConfig['api_key']) || !empty($tmdbConfig['token'])) {
-        // Simple search for the first match on TMDB
-        $token = isset($tmdbConfig['token']) ? $tmdbConfig['token'] : null;
-        $apiKey = isset($tmdbConfig['api_key']) ? $tmdbConfig['api_key'] : null;
-        $encodedTitle = urlencode($title);
-        
-        if ($token) {
-            $url = "https://api.themoviedb.org/3/search/movie?query={$encodedTitle}&language=de-DE";
-            $opts = [
-                'http' => [
-                    'method' => 'GET',
-                    'header' => [
-                        'Authorization: Bearer ' . $token,
-                        'Content-Type: application/json'
-                    ]
-                ]
-            ];
-            $context = stream_context_create($opts);
-            $response = @file_get_contents($url, false, $context);
-        } elseif ($apiKey) {
-            $url = "https://api.themoviedb.org/3/search/movie?api_key={$apiKey}&query={$encodedTitle}&language=de-DE";
-            $response = @file_get_contents($url);
-        } else {
-            $response = false;
-        }
+        if (!empty($barcode)) {
+            $tmdbMovie = searchTmdbByBarcode($barcode, $tmdbConfig);
+            if ($tmdbMovie) {
+                $tmdbId = $tmdbMovie['id'];
+                // If title is missing, use the one from TMDB
+                if (empty($title)) {
+                    $title = $tmdbMovie['title'];
+                }
+            } else {
+                // Fallback: search for a title via external services
+                $externalTitle = searchExternalTitleByBarcode($barcode, $tmdbConfig);
+                if ($externalTitle) {
+                    // Use this found title to search TMDB again
+                    $titleSearch = urlencode($externalTitle);
+                    $token = isset($tmdbConfig['token']) ? $tmdbConfig['token'] : null;
+                    $apiKey = isset($tmdbConfig['api_key']) ? $tmdbConfig['api_key'] : null;
+                    
+                    if ($token) {
+                        $url = "https://api.themoviedb.org/3/search/movie?query={$titleSearch}&language=de-DE";
+                        $opts = [
+                            'http' => [
+                                'method' => 'GET',
+                                'header' => [
+                                    'Authorization: Bearer ' . $token,
+                                    'Content-Type: application/json'
+                                ]
+                            ]
+                        ];
+                        $context = stream_context_create($opts);
+                        $response = @file_get_contents($url, false, $context);
+                    } elseif ($apiKey) {
+                        $url = "https://api.themoviedb.org/3/search/movie?api_key={$apiKey}&query={$titleSearch}&language=de-DE";
+                        $response = @file_get_contents($url);
+                    } else {
+                        $response = false;
+                    }
 
-        if ($response !== false) {
-            $data = json_decode($response, true);
-            if (!empty($data['results'][0]['id'])) {
-                $tmdbId = $data['results'][0]['id'];
+                    if ($response !== false) {
+                        $data = json_decode($response, true);
+                        if (!empty($data['results'][0]['id'])) {
+                            $tmdbId = $data['results'][0]['id'];
+                            if (empty($title)) {
+                                $title = $data['results'][0]['title'];
+                            }
+                        }
+                    }
+                    
+                    // Fallback title if TMDB search failed
+                    if (empty($title)) {
+                        $title = $externalTitle;
+                    }
+                }
+            }
+        }
+        
+        // If still no tmdbId and title is available, try title search
+        if (!$tmdbId && !empty($title)) {
+            $token = isset($tmdbConfig['token']) ? $tmdbConfig['token'] : null;
+            $apiKey = isset($tmdbConfig['api_key']) ? $tmdbConfig['api_key'] : null;
+            $encodedTitle = urlencode($title);
+            
+            if ($token) {
+                $url = "https://api.themoviedb.org/3/search/movie?query={$encodedTitle}&language=de-DE";
+                $opts = [
+                    'http' => [
+                        'method' => 'GET',
+                        'header' => [
+                            'Authorization: Bearer ' . $token,
+                            'Content-Type: application/json'
+                        ]
+                    ]
+                ];
+                $context = stream_context_create($opts);
+                $response = @file_get_contents($url, false, $context);
+            } elseif ($apiKey) {
+                $url = "https://api.themoviedb.org/3/search/movie?api_key={$apiKey}&query={$encodedTitle}&language=de-DE";
+                $response = @file_get_contents($url);
+            } else {
+                $response = false;
+            }
+
+            if ($response !== false) {
+                $data = json_decode($response, true);
+                if (!empty($data['results'][0]['id'])) {
+                    $tmdbId = $data['results'][0]['id'];
+                }
             }
         }
     }
 
     // Insert the movie into the database
     // We start with minimal data: title and optionally tmdb_id
-    $stmt = $pdo->prepare('INSERT INTO movies (title, tmdb_id) VALUES (?, ?)');
-    $stmt->execute([$title, $tmdbId]);
+    $stmt = $pdo->prepare('INSERT INTO movies (title, barcode, tmdb_id) VALUES (?, ?, ?)');
+    $stmt->execute([$title, $barcode, $tmdbId]);
     
     $newId = $pdo->lastInsertId();
-    
+
+    $tmdbFound = !empty($tmdbId);
+
     echo json_encode([
         'success' => true,
-        'message' => 'Movie added successfully.',
+        'message' => $tmdbFound ? 'Movie added successfully.' : 'Movie added with barcode, but TMDB details not found.',
         'id' => $newId,
         'title' => $title,
-        'tmdb_id' => $tmdbId
+        'barcode' => $barcode,
+        'tmdb_id' => $tmdbId,
+        'tmdb_found' => $tmdbFound
     ]);
 
 } catch (PDOException $e) {

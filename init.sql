@@ -1,6 +1,7 @@
 CREATE TABLE IF NOT EXISTS movies (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    title VARCHAR(255) NOT NULL,
+    title VARCHAR(255) DEFAULT NULL,
+    barcode VARCHAR(255) DEFAULT NULL,
     director VARCHAR(255),
     release_year INT,
     genre VARCHAR(100),
