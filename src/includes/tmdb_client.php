@@ -81,25 +81,38 @@ function searchTmdbByBarcode($barcode, $config, $language = 'de-DE') {
 
 /**
  * Fallback: Search for a title by barcode using other public APIs
+ * Returns array ['title' => string, 'type' => 'book'|'movie'|null, 'author' => string|null, 'cover_url' => string|null]
  */
-function searchExternalTitleByBarcode($barcode, $config = []) {
+function searchExternalTitleByBarcode($barcode, $config = [], $year = null) {
     $encodedBarcode = urlencode($barcode);
+    $yearQuery = !empty($year) ? " " . urlencode($year) : "";
     
     // 1. Try Google Books (Excellent for ISBN/Books)
     if (!empty($config['google_api_key'])) {
         $googleKey = $config['google_api_key'];
+        // Search by ISBN, optionally with year in general query if needed, 
+        // but ISBN is usually specific. We'll stick to ISBN for precision.
         $url = "https://www.googleapis.com/books/v1/volumes?q=isbn:{$encodedBarcode}&key={$googleKey}";
         $response = @file_get_contents($url);
         if ($response !== false) {
             $data = json_decode($response, true);
             if (!empty($data['items'][0]['volumeInfo']['title'])) {
-                return $data['items'][0]['volumeInfo']['title'];
+                $info = $data['items'][0]['volumeInfo'];
+                return [
+                    'title' => $info['title'],
+                    'type' => 'book',
+                    'author' => !empty($info['authors']) ? implode(', ', $info['authors']) : null,
+                    'cover_url' => !empty($info['imageLinks']['thumbnail']) ? $info['imageLinks']['thumbnail'] : (!empty($info['imageLinks']['smallThumbnail']) ? $info['imageLinks']['smallThumbnail'] : null)
+                ];
             }
         }
     }
 
     // 2. Try Discogs (Good for media/DVDs)
     $url = "https://api.discogs.com/database/search?barcode={$encodedBarcode}";
+    if (!empty($year)) {
+        $url .= "&year=" . urlencode($year);
+    }
     $opts = [
         'http' => [
             'method' => 'GET',
@@ -115,24 +128,45 @@ function searchExternalTitleByBarcode($barcode, $config = []) {
     if ($response !== false) {
         $data = json_decode($response, true);
         if (!empty($data['results'][0]['title'])) {
+            $result = $data['results'][0];
             // Discogs titles are often "Artist - Title", we try to clean it
-            $title = $data['results'][0]['title'];
+            $title = $result['title'];
+            $author = null;
             if (strpos($title, ' - ') !== false) {
                 $parts = explode(' - ', $title);
-                return trim(end($parts));
+                $title = trim(end($parts));
+                $author = trim($parts[0]);
+            } else {
+                $title = trim($title);
             }
-            return trim($title);
+            return [
+                'title' => $title,
+                'type' => 'movie',
+                'author' => $author,
+                'cover_url' => !empty($result['cover_image']) ? $result['cover_image'] : null
+            ];
         }
     }
 
-    // 2. Try Open Library (Better for Books/ISBN, but sometimes has media)
+    // 3. Try Open Library (Better for Books/ISBN, but sometimes has media)
     $url = "https://openlibrary.org/api/books?bibkeys=ISBN:{$encodedBarcode}&format=json&jscmd=data";
     $response = @file_get_contents($url);
     if ($response !== false) {
         $data = json_decode($response, true);
         $key = "ISBN:{$barcode}";
         if (!empty($data[$key]['title'])) {
-            return $data[$key]['title'];
+            $info = $data[$key];
+            $author = null;
+            if (!empty($info['authors'])) {
+                $authorNames = array_map(function($a) { return $a['name']; }, $info['authors']);
+                $author = implode(', ', $authorNames);
+            }
+            return [
+                'title' => $info['title'],
+                'type' => 'book',
+                'author' => $author,
+                'cover_url' => !empty($info['cover']['large']) ? $info['cover']['large'] : (!empty($info['cover']['medium']) ? $info['cover']['medium'] : null)
+            ];
         }
     }
 
